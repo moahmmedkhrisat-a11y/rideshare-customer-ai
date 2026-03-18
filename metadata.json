@@ -1,0 +1,5 @@
+{
+  "name": "RideShare",
+  "description": "A modern ride-sharing platform with real-time tracking, driver/passenger modes, and seamless booking.",
+  "requestFramePermissions": ["geolocation"]
+}

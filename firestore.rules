@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (uid)
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - displayName: string (optional)
+    //   - email: string (required, format: email)
+    //   - photoURL: string (optional)
+    //   - createdAt: string (required, format: ISO 8601)
+    //   - savedPlaces: map (optional, keys: home, work)
+    //
+    // Collection: rides
+    // Document ID: rideId (auto-generated)
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - pickup: string (required)
+    //   - destination: string (required)
+    //   - pickupCoords: list (required, size: 2)
+    //   - destCoords: list (required, size: 2)
+    //   - price: string (required)
+    //   - type: string (required)
+    //   - status: string (required, enum: Active, Completed, Cancelled, Scheduled)
+    //   - createdAt: string (required, format: ISO 8601)
+    //   - driver: map (optional)
+    //   - rating: number (optional, range: 1-5)
+    //   - review: string (optional, max size: 500)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+    
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('createdAt' in data) || isValidDateString(data.createdAt));
+    }
+
+    function isValidRide(data) {
+      let requiredFields = ['uid', 'pickup', 'destination', 'price', 'status', 'createdAt'];
+      let allowedStatuses = ['Active', 'Completed', 'Cancelled', 'Scheduled'];
+      
+      return hasRequiredFields(requiredFields) &&
+             data.uid == request.auth.uid &&
+             data.pickup is string && data.pickup.size() > 0 && data.pickup.size() < 200 &&
+             data.destination is string && data.destination.size() > 0 && data.destination.size() < 200 &&
+             data.status in allowedStatuses &&
+             isValidDateString(data.createdAt) &&
+             (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5)) &&
+             (!('review' in data) || (data.review is string && data.review.size() < 500));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      request.resource.data.uid == resource.data.uid;
+    }
+
+    match /rides/{rideId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidRide(request.resource.data);
+      allow update: if isDocOwner() && isValidRide(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
